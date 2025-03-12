@@ -8,8 +8,34 @@
 #define CORE_1 1
 #define CORE_0 0
 
-AD7771 adc(&SPI, 7);
-DAC7678 dac;
+AD777x::Config config{
+  .spi_host = SPI2_HOST,
+  .sclk_pin = 14,
+  .miso_pin = 12,
+  .mosi_pin = 13,
+  .cs_pin = 15,
+  .drdy_pin = 27,
+  .reset_pin = 26,
+  .mode0_pin = 32,
+  .mode1_pin = 33,
+  .mode2_pin = 25,
+  .mode3_pin = 26,
+  .dclk0_pin = 27,
+  .dclk1_pin = 14,
+  .dclk2_pin = 12,
+  .sync_in_pin = 13,
+  .convst_sar_pin = 15,
+  .ctrl_mode = AD777x::CtrlMode::AD777x_PIN_CTRL,
+  .spi_crc_en = AD777x::State::AD777x_DISABLE,
+  .state = {AD777x::State::AD777x_ENABLE, AD777x::State::AD777x_ENABLE, AD777x::State::AD777x_ENABLE, AD777x::State::AD777x_ENABLE,
+            AD777x::State::AD777x_ENABLE, AD777x::State::AD777x_ENABLE, AD777x::State::AD777x_ENABLE, AD777x::State::AD777x_ENABLE},
+  .dec_rate_int = 128,
+  .dec_rate_dec = 0,
+  .sinc5_state = AD777x::Sinc5State::AD777x_ENABLE
+};
+
+AD777x adc(config);
+DAC7678 dac(DAC7678_DEFAULT_ADDRESS, Wire);
 
 EEG_channel EEG_channel1(&adc, &dac, 1);
 /*EEG_channel EEG_channel2(&adc, &dac, 2);
@@ -24,13 +50,6 @@ int myFunction(int, int);
 
 void setup() {
 
-  adc.begin(
-    AD7771_INT_REF,
-    AD7771_HIGH_RES,
-    AD7771_DCLK_DIV_1, 
-    AD7771_DISABLE, 
-    AD7771_GAIN_1
-  );
   EEG_channels.push_back(EEG_channel1);
 
   xTaskCreatePinnedToCore(task_read_ADC, "read_ADC", DEFAULT_STACK_SIZE * 2, NULL, 1, NULL, CORE_1);
