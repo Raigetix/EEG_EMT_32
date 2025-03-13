@@ -1,45 +1,30 @@
 #include "AD777x.h"
 
 AD777x::AD777x(const Config& cfg) : config(cfg) {
-	// Configurar pines GPIO
+	if (cfg.ctrl_mode == AD777x::CtrlMode::AD777x_SPI_CTRL) {
+		// Configurar SPI
+		this->p_spi = config.spi_host;
+		pinMode(this->config.cs_pin, OUTPUT);
+		digitalWrite(this->config.cs_pin, HIGH);  // Desactivamos el dispositivo SPI
+		
+		//p_spi->begin(config.sclk_pin, config.miso_pin, config.mosi_pin, config.cs_pin);
+	}
+  	else if(cfg.ctrl_mode == AD777x::CtrlMode::AD777x_PIN_CTRL){
+		// Configurar pines GPIO
+		gpio_mode0 = static_cast<gpio_num_t>(config.mode0_pin);
+		gpio_mode1 = static_cast<gpio_num_t>(config.mode1_pin);
+		gpio_mode2 = static_cast<gpio_num_t>(config.mode2_pin);
+		gpio_mode3 = static_cast<gpio_num_t>(config.mode3_pin);
+		gpio_dclk0 = static_cast<gpio_num_t>(config.dclk0_pin);
+		gpio_dclk1 = static_cast<gpio_num_t>(config.dclk1_pin);
+		gpio_dclk2 = static_cast<gpio_num_t>(config.dclk2_pin);
+		gpio_sync_in = static_cast<gpio_num_t>(config.sync_in_pin);
+		gpio_convst_sar = static_cast<gpio_num_t>(config.convst_sar_pin);
+	}
 	gpio_reset = static_cast<gpio_num_t>(config.reset_pin);
-	gpio_mode0 = static_cast<gpio_num_t>(config.mode0_pin);
-	gpio_mode1 = static_cast<gpio_num_t>(config.mode1_pin);
-	gpio_mode2 = static_cast<gpio_num_t>(config.mode2_pin);
-	gpio_mode3 = static_cast<gpio_num_t>(config.mode3_pin);
-	gpio_dclk0 = static_cast<gpio_num_t>(config.dclk0_pin);
-	gpio_dclk1 = static_cast<gpio_num_t>(config.dclk1_pin);
-	gpio_dclk2 = static_cast<gpio_num_t>(config.dclk2_pin);
-	gpio_sync_in = static_cast<gpio_num_t>(config.sync_in_pin);
-	gpio_convst_sar = static_cast<gpio_num_t>(config.convst_sar_pin);
-
-	// Configurar SPI
-	spi_bus_config_t buscfg = {
-		.mosi_io_num = config.mosi_pin,
-		.miso_io_num = config.miso_pin,
-		.sclk_io_num = config.sclk_pin,
-		.quadwp_io_num = -1,
-		.quadhd_io_num = -1,
-		.max_transfer_sz = 32
-	};
-	
-	spi_device_interface_config_t devcfg = {
-		.command_bits = 0,
-		.address_bits = 8,
-		.dummy_bits = 0,
-		.mode = 0,
-		.clock_speed_hz = 10000000,
-		.spics_io_num = config.cs_pin,
-		.queue_size = 7
-	};
-	
-	spi_bus_initialize(config.spi_host, &buscfg, SPI_DMA_CH_AUTO);
-	spi_bus_add_device(config.spi_host, &devcfg, &spi);
 }
 
 AD777x::~AD777x() {
-	spi_bus_remove_device(spi);
-	spi_bus_free(config.spi_host);
 }
 
 bool AD777x::initialize() {
@@ -78,7 +63,7 @@ void AD777x::setup_defaults() {
 }
 
 void AD777x::write_register(uint8_t reg, uint8_t value) {
-	spi_transaction_t t = {};
+/* 	spi_transaction_t t = {};
 	t.flags = SPI_TRANS_USE_RXDATA;
 	t.length = 16;
 	t.tx_buffer = &reg;
@@ -87,18 +72,27 @@ void AD777x::write_register(uint8_t reg, uint8_t value) {
 	uint8_t tx_data[2] = {reg, value};
 	t.tx_buffer = tx_data;
 	
-	spi_device_polling_transmit(spi, &t);
+	spi_device_polling_transmit(spi, &t); */
+	digitalWrite(this->config.cs_pin, LOW);  	// Activamos el dispositivo SPI
+    this->p_spi->transfer(reg);          		// Enviamos el registro
+    this->p_spi->transfer(value);        		// Enviamos el valor
+    digitalWrite(this->config.cs_pin, HIGH);	// Desactivamos el dispositivo SPI
 }
 
 uint8_t AD777x::read_register(uint8_t reg) {
-	spi_transaction_t t = {};
+/* 	spi_transaction_t t = {};
 	uint8_t rx_data[2];
 	t.length = 16;
 	t.rx_buffer = rx_data;
 	t.tx_buffer = &reg;
 	
 	spi_device_polling_transmit(spi, &t);
-	return rx_data[1];
+	return rx_data[1]; */
+    digitalWrite(this->config.cs_pin, LOW);			// Activamos el dispositivo SPI
+    this->p_spi->transfer(reg);						// Enviamos el registro
+    uint8_t value = this->p_spi->transfer(0x00);	// Leemos el valor
+    digitalWrite(this->config.cs_pin, HIGH);		// Desactivamos el dispositivo SPI
+    return value;
 }
 
 void AD777x::wait_for_data_ready() {
@@ -109,7 +103,7 @@ void AD777x::wait_for_data_ready() {
 
 void AD777x::read_all_channels() {
 
-	uint8_t buffer[NUM_CHANNELS * DATA_BYTES];
+/* 	uint8_t buffer[NUM_CHANNELS * DATA_BYTES];
 	wait_for_data_ready();
 	
 	spi_transaction_t t = {};
@@ -122,7 +116,29 @@ void AD777x::read_all_channels() {
 	for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
 		uint8_t offset = i * DATA_BYTES;
 		this->ch_values[i] = (buffer[offset] << 16) | (buffer[offset + 1] << 8) | buffer[offset + 2];
-	}
+	} */
+
+	uint8_t buffer[NUM_CHANNELS * DATA_BYTES]; // Buffer para almacenar los datos leídos
+
+    // Esperar a que el dispositivo esté listo para enviar datos
+    wait_for_data_ready();
+
+    // Activar el dispositivo SPI (poner el pin CS en LOW)
+    digitalWrite(this->config.cs_pin, LOW);
+
+    // Leer los datos de todos los canales
+    for (uint8_t i = 0; i < NUM_CHANNELS * DATA_BYTES; i++) {
+        buffer[i] = this->p_spi->transfer(0x00); // Leer un byte (enviamos 0x00 como dato dummy)
+    }
+
+    // Desactivar el dispositivo SPI (poner el pin CS en HIGH)
+    digitalWrite(this->config.cs_pin, HIGH);
+
+    // Decodificar los datos
+    for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
+        uint8_t offset = i * DATA_BYTES;
+        this->ch_values[i] = (buffer[offset] << 16) | (buffer[offset + 1] << 8) | buffer[offset + 2];
+    }
 }
 
 uint32_t AD777x::read_channel(Channel ch){
@@ -177,7 +193,7 @@ int32_t AD777x::set_spi_operation_mode(SpiOpMode mode) {
 }
 
 int32_t AD777x::spi_sar_read_code(SarMux mux_next_conv, uint16_t* sar_code) {
-    uint8_t buf[3];
+/*     uint8_t buf[3];
     buf[0] = 0x00 | (0x16 & 0x7F); // Registro GLOBAL_MUX_CONFIG
     buf[1] = static_cast<uint8_t>(mux_next_conv) << 3; // Configura el mux
     spi_transaction_t t = {};
@@ -186,7 +202,28 @@ int32_t AD777x::spi_sar_read_code(SarMux mux_next_conv, uint16_t* sar_code) {
     t.rx_buffer = buf;
     spi_device_polling_transmit(spi, &t);
     *sar_code = (buf[1] << 8) | buf[2];
-    return 0;
+    return 0; */
+
+	uint8_t buf[3]; // Buffer para almacenar los datos enviados y recibidos
+
+    // Configurar el registro GLOBAL_MUX_CONFIG y el mux
+    buf[0] = 0x00 | (0x16 & 0x7F); // Dirección del registro GLOBAL_MUX_CONFIG
+    buf[1] = static_cast<uint8_t>(mux_next_conv) << 3; // Configurar el mux
+
+    // Activar el dispositivo SPI (poner el pin CS en LOW)
+    digitalWrite(this->config.cs_pin, LOW);
+
+    // Enviar y recibir datos
+    buf[1] = this->p_spi->transfer(buf[0]); // Enviar la dirección del registro y leer el primer byte
+    buf[2] = this->p_spi->transfer(buf[1]); // Enviar el valor del mux y leer el segundo byte
+
+    // Desactivar el dispositivo SPI (poner el pin CS en HIGH)
+    digitalWrite(this->config.cs_pin, HIGH);
+
+    // Decodificar el código SAR
+    *sar_code = (buf[1] << 8) | buf[2];
+
+    return 0; // Retornar éxito
 }
 
 int32_t AD777x::do_single_sar_conversion(SarMux mux, uint16_t* sar_code) {

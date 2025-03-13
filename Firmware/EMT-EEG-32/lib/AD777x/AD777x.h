@@ -214,7 +214,7 @@ class AD777x {
 	
 		// Configuración básica del dispositivo
 		struct Config {
-			spi_host_device_t spi_host;
+			SPIClass* spi_host;
 			int sclk_pin;
 			int miso_pin;
 			int mosi_pin;
@@ -266,7 +266,7 @@ class AD777x {
 	
 	private:
 		Config config;
-		spi_device_handle_t spi;
+		SPIClass* p_spi;
 		gpio_num_t gpio_reset;
 		gpio_num_t gpio_mode0;
 		gpio_num_t gpio_mode1;
