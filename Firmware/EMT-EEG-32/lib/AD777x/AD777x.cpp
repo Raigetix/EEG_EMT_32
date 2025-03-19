@@ -103,42 +103,23 @@ void AD777x::wait_for_data_ready() {
 
 void AD777x::read_all_channels() {
 
-/* 	uint8_t buffer[NUM_CHANNELS * DATA_BYTES];
-	wait_for_data_ready();
-	
-	spi_transaction_t t = {};
-	t.length = NUM_CHANNELS * DATA_BYTES * 8;
-	t.rx_buffer = buffer;
-	
-	spi_device_polling_transmit(spi, &t);
-	
-	// Decodificar datos
-	for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
-		uint8_t offset = i * DATA_BYTES;
-		this->ch_values[i] = (buffer[offset] << 16) | (buffer[offset + 1] << 8) | buffer[offset + 2];
-	} */
+	uint8_t buff[32] = { 0 };
+	uint8_t byte_index;
+	uint8_t ch_id;
+	int32_t ret;
+	int32_t ret;
 
-	uint8_t buffer[NUM_CHANNELS * DATA_BYTES]; // Buffer para almacenar los datos leídos
+	/* Read the SPI data */
+	ret = spi_write_and_read(buff,sizeof(buff));
+	if (ret) {
+		return;
+	}
 
-    // Esperar a que el dispositivo esté listo para enviar datos
-    wait_for_data_ready();
-
-    // Activar el dispositivo SPI (poner el pin CS en LOW)
-    digitalWrite(this->config.cs_pin, LOW);
-
-    // Leer los datos de todos los canales
-    for (uint8_t i = 0; i < NUM_CHANNELS * DATA_BYTES; i++) {
-        buffer[i] = this->p_spi->transfer(0x00); // Leer un byte (enviamos 0x00 como dato dummy)
-    }
-
-    // Desactivar el dispositivo SPI (poner el pin CS en HIGH)
-    digitalWrite(this->config.cs_pin, HIGH);
-
-    // Decodificar los datos
-    for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
-        uint8_t offset = i * DATA_BYTES;
-        this->ch_values[i] = (buffer[offset] << 16) | (buffer[offset + 1] << 8) | buffer[offset + 2];
-    }
+	/* Decode the bytes into ADC Raw data */
+	for (ch_id = 0; ch_id < NUM_CHANNELS; ch_id++) {
+		byte_index = (DATA_BYTES * ch_id) + (ch_id + 1);
+		this->ch_values[ch_id] = (buff[byte_index] << 16) | (buff[byte_index + 1] << 8) | (buff[byte_index + 2]);
+	}
 }
 
 uint32_t AD777x::read_channel(Channel ch){
@@ -146,47 +127,174 @@ uint32_t AD777x::read_channel(Channel ch){
 }
 
 void AD777x::set_gain(Channel channel, Gain gain) {
-	uint8_t reg = static_cast<uint8_t>(channel) + 0x00; // Registro de configuración del canal
-	uint8_t value = static_cast<uint8_t>(gain) << 6;    // Ganancia en bits 6-7
-	write_register(reg, value);
+/* 	uint8_t reg = static_cast<uint8_t>(channel) + 0x00; // Registro de configuración del canal
+	uint8_t value = static_cast<uint8_t>(gain) << 6;    // Ganancia en bits 6-7 */
+
+	if (this->config.ctrl_mode == CtrlMode::AD777x_PIN_CTRL) {
+		if (channel <= Channel::AD777x_CH3) {
+			this->config.gain[(int)Channel::AD777x_CH0] = gain;
+			this->config.gain[(int)Channel::AD777x_CH1] = gain;
+			this->config.gain[(int)Channel::AD777x_CH2] = gain;
+			this->config.gain[(int)Channel::AD777x_CH3] = gain;
+		} else {
+			this->config.gain[(int)Channel::AD777x_CH4] = gain;
+			this->config.gain[(int)Channel::AD777x_CH5] = gain;
+			this->config.gain[(int)Channel::AD777x_CH6] = gain;
+			this->config.gain[(int)Channel::AD777x_CH7] = gain;
+		}
+		//ret = ad7779_do_update_mode_pins(dev);
+	} else {
+		this->config.gain[(int)channel] = gain;
+		spi_int_reg_write_mask(AD777x_REG_CH_CONFIG((int)channel),AD777x_CH_GAIN(0x3),AD777x_CH_GAIN((int)gain));
+	}
+
+	/* write_register(reg, value); */
 }
 
 void AD777x::set_decimation_rate(uint16_t int_val, uint16_t dec_val) {
-	write_register(0x60, (int_val >> 8) & 0xFF); // MSB
+	int32_t ret;
+	uint8_t msb;
+	uint8_t lsb;
+	if (this->config.ctrl_mode == CtrlMode::AD777x_PIN_CTRL) {
+		switch (int_val) {
+		case 128:
+			break;
+		case 256:
+			break;
+		case 512:
+			break;
+		case 1024:
+			break;
+		default:
+			printf("%s: This setting can't be set in PIN control mode.\n",
+			       __func__);
+			//return -1;
+		}
+		this->config.dec_rate_int = int_val;
+		this->config.dec_rate_int = dec_val;
+		//ret = ad7779_do_update_mode_pins(dev);
+	} else {
+		msb = (int_val & 0x0F00) >> 8;
+		lsb = (int_val & 0x00FF) >> 0;
+		ret = spi_int_reg_write(AD777x_REG_SRC_N_MSB,msb);
+		ret |= spi_int_reg_write(AD777x_REG_SRC_N_LSB,lsb);
+		dec_val = (dec_val * 65536) / 1000;
+		msb = (dec_val & 0xFF00) >> 8;
+		lsb = (dec_val & 0x00FF) >> 0;
+		ret |= spi_int_reg_write(AD777x_REG_SRC_IF_MSB,msb);
+		ret |= spi_int_reg_write(AD777x_REG_SRC_IF_LSB,lsb);
+		this->config.dec_rate_int = int_val;
+		this->config.dec_rate_int = dec_val;
+	}
+
+/* 	write_register(0x60, (int_val >> 8) & 0xFF); // MSB
 	write_register(0x61, int_val & 0xFF);        // LSB
 	write_register(0x62, (dec_val >> 8) & 0xFF); // MSB
-	write_register(0x63, dec_val & 0xFF);        // LSB
+	write_register(0x63, dec_val & 0xFF);        // LSB */
 }
 
 void AD777x::set_power_mode(PowerMode mode) {
-	uint8_t value = (mode == PowerMode::AD777x_HIGH_RES) ? 0x40 : 0x00; // Bit 6
-	write_register(0x11, value);
+	int32_t ret = spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_1,AD777x_MOD_POWERMODE, (int)mode ? AD777x_MOD_POWERMODE : 0);
+	this->config.pwr_mode = mode;
+
+	//uint8_t value = (mode == PowerMode::AD777x_HIGH_RES) ? 0x40 : 0x00; // Bit 6
+	//write_register(0x11, value);
 }
 
 void AD777x::set_reference_type(RefType ref_type) {
-	uint8_t value = static_cast<uint8_t>(ref_type) << 6; // Bits 6-7
-	write_register(0x15, value);
+
+	int32_t ret;
+	if (ref_type == RefType::AD777x_INT_REF) 
+		ret = spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_1,AD777x_PDB_REFOUT_BUF,AD777x_PDB_REFOUT_BUF);
+	else
+		ret = spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_1, AD777x_PDB_REFOUT_BUF, 0);
+	
+ 	if (ret)
+		return;
+
+	ret = spi_int_reg_write_mask(AD777x_REG_ADC_MUX_CONFIG, AD777x_REF_MUX_CTRL(0x3), AD777x_REF_MUX_CTRL((int)ref_type));
+	if (ret)
+		return;
+
+	this->config.ref_type = ref_type;
+
+/* 	uint8_t value = static_cast<uint8_t>(ref_type) << 6; // Bits 6-7
+	write_register(0x15, value); */
 }
 
 void AD777x::set_dclk_div(DclkDiv div) {
-	uint8_t value = static_cast<uint8_t>(div) << 1; // Bits 1-3
-	write_register(0x14, value);
+	int32_t ret;
+	if (this->config.ctrl_mode == CtrlMode::AD777x_PIN_CTRL) {
+/* 		ret = no_os_gpio_set_value(dev->gpio_dclk0,
+					   ((div & 0x01) >> 0));
+		ret |= no_os_gpio_set_value(dev->gpio_dclk1,
+					    ((div & 0x02) >> 1));
+		ret |= no_os_gpio_set_value(dev->gpio_dclk2,
+					    ((div & 0x04) >> 2)); */
+	} else {
+		ret = spi_int_reg_write_mask(AD777x_REG_DOUT_FORMAT,AD777x_DCLK_CLK_DIV(0x7),AD777x_DCLK_CLK_DIV((int)div));
+	}
+	this->config.dclk_div = div;
+
+
+/* 	uint8_t value = static_cast<uint8_t>(div) << 1; // Bits 1-3
+	write_register(0x14, value); */
 }
 
 void AD777x::set_sinc5_filter_state(Sinc5State state) {
+	int32_t ret;
+	if (this->config.ctrl_mode == CtrlMode::AD777x_PIN_CTRL) {
+		printf("%s: This feature is not available in PIN control mode.\n",
+		       __func__);
+		return;
+	}
+
+	ret = spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_2,AD777x_FILTER_MODE,(state == Sinc5State::AD777x_ENABLE) ?AD777x_FILTER_MODE : 0);
+	this->config.sinc5_state = state;
+
 	uint8_t value = (state == Sinc5State::AD777x_ENABLE) ? 0x40 : 0x00; // Bit 6
 	write_register(0x12, value);
 }
 
 // Métodos SAR ADC
 int32_t AD777x::set_sar_configuration(State state, SarMux mux) {
-    uint8_t value = (state == State::AD777x_ENABLE) ? 0x08 : 0x00; // Bit 3
+
+	int32_t ret;
+
+	ret = spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_1,AD777x_PDB_SAR,(state == State::AD777x_ENABLE) ? AD777x_PDB_SAR : 0);
+	ret |= spi_int_reg_write(AD777x_REG_GLOBAL_MUX_CONFIG,AD777x_GLOBAL_MUX_CTRL((int)mux));
+ 	this->config.sar_state = state;
+	this->config.sar_mux = mux;
+
+/*     uint8_t value = (state == State::AD777x_ENABLE) ? 0x08 : 0x00; // Bit 3
     value |= static_cast<uint8_t>(mux) << 3; // Bits 4-7
     write_register(0x16, value);
-    return 0;
+    return 0; */
 }
 
 int32_t AD777x::set_spi_operation_mode(SpiOpMode mode) {
+
+	int32_t ret;
+	uint8_t cfg_2;
+	uint8_t cfg_3;
+
+	switch (mode) {
+	case SpiOpMode::AD777x_SD_CONV:
+		cfg_2 = 0;
+		cfg_3 = AD777x_SPI_SLAVE_MODE_EN;
+		break;
+	case SpiOpMode::AD777x_SAR_CONV:
+		cfg_2 = AD777x_SAR_DIAG_MODE_EN;
+		cfg_3 = 0;
+		break;
+	default:	// AD7779_INT_REG
+		cfg_2 = 0;
+		cfg_3 = 0;
+	}
+	ret = spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_2,AD777x_SAR_DIAG_MODE_EN,cfg_2);
+	ret |= spi_int_reg_write_mask(AD777x_REG_GENERAL_USER_CONFIG_3,AD777x_SPI_SLAVE_MODE_EN,cfg_3);
+	this->config.spi_op_mode = mode;
+
     uint8_t value = static_cast<uint8_t>(mode);
     write_register(0x13, value);
     return 0;
@@ -238,10 +346,10 @@ int32_t AD777x::do_single_sar_conversion(SarMux mux, uint16_t* sar_code) {
     set_spi_operation_mode(SpiOpMode::AD777x_SAR_CONV);
 
     // Iniciar la conversión
-    gpio_set_level(gpio_convst_sar, 0);
-    vTaskDelay(pdMS_TO_TICKS(1)); // Tiempo de adquisición
-    gpio_set_level(gpio_convst_sar, 1);
-    vTaskDelay(pdMS_TO_TICKS(1)); // Tiempo de conversión
+    digitalWrite(this->config.convst_sar_pin, LOW);
+    delay(1); // Tiempo de adquisición
+    digitalWrite(this->config.convst_sar_pin, HIGH);
+    delay(1); // Tiempo de conversión
 
     // Leer el resultado
     spi_sar_read_code(mux, sar_code);

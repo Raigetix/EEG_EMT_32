@@ -7,6 +7,12 @@
 #include <driver/gpio.h>
 #include <SPI.h>
 
+// Constantes del AD777x
+#define NUM_CHANNELS 8
+#define DATA_BYTES 3
+
+#define AD777x_CONV_TIMEOUT	10000
+
 #define SUCCESS		0
 #define FAILURE		-1
 #define ERR_INVALID_CRC -2
@@ -93,6 +99,9 @@
 #define AD777x_DOUT_FORMAT(x)				(((x) & 0x3) << 6)
 #define AD777x_DOUT_HEADER_FORMAT			(1 << 5)
 #define AD777x_DCLK_CLK_DIV(x)				(((x) & 0x3) << 1)
+
+/* AD7779_REG_ADC_MUX_CONFIG */
+#define AD777x_REF_MUX_CTRL(x)				(((x) & 0x3) << 6)
 
 /* AD777x_REG_GLOBAL_MUX_CONFIG */
 #define AD777x_GLOBAL_MUX_CTRL(x)			(((x) & 0x1F) << 3)
@@ -230,6 +239,9 @@ class AD777x {
 			int dclk2_pin;
 			int sync_in_pin;
 			int convst_sar_pin;
+			State sar_state;
+			SarMux sar_mux;
+			SpiOpMode spi_op_mode;
 			CtrlMode ctrl_mode;
 			State spi_crc_en;
 			State state[8];
@@ -278,20 +290,116 @@ class AD777x {
 		gpio_num_t gpio_sync_in;
 		gpio_num_t gpio_convst_sar;
 
-		uint32_t ch_values[8];
-		
+		uint32_t ch_values [8];
+	
+		uint8_t cached_reg_val[AD777x_REG_SRC_UPDATE + 1];
+
 		void write_register(uint8_t reg, uint8_t value);
 		uint8_t read_register(uint8_t reg);
 		void setup_defaults();
 		void reset_device();
 		void wait_for_data_ready();
 		
-		// Constantes del AD777x
-		static constexpr uint8_t NUM_CHANNELS = 8;
-		static constexpr uint8_t DATA_BYTES = 3;
+		uint8_t compute_crc8(uint8_t *data,uint8_t data_size){
+			uint8_t i;
+			uint8_t crc = 0;
+
+			while (data_size) {
+				for (i = 0x80; i != 0; i >>= 1) {
+					if (((crc & 0x80) != 0) != ((*data & i) != 0)) {
+						crc <<= 1;
+						crc ^= AD777x_CRC8_POLY;
+					} else
+						crc <<= 1;
+				}
+				data++;
+				data_size--;
+			}
+
+			return crc;
+		}
+		
+		int spi_int_reg_read(uint8_t reg_addr,uint8_t *reg_data){
+			uint8_t buf[3];
+			uint8_t buf_size = 2;
+			uint8_t crc;
+			int ret;
+	
+			buf[0] = 0x80 | (reg_addr & 0x7F);
+			buf[1] = 0x00;
+			buf[2] = 0x00;
+			if (this->config.spi_crc_en == State::AD777x_ENABLE)
+				buf_size = 3;
+			ret = spi_write_and_read(buf, buf_size);
+	
+			*reg_data = buf[1];
+			if (this->config.spi_crc_en == State::AD777x_ENABLE) {
+				buf[0] = 0x80 | (reg_addr & 0x7F);
+				crc = compute_crc8(&buf[0], 2);
+				if (crc != buf[2]) {
+					ret = -1;
+				}
+			}
+			return ret;
+		}
+
+		int spi_int_reg_write(uint8_t reg_addr,uint8_t reg_data){
+			uint8_t buf[3];
+			uint8_t buf_size = 2;
+			int32_t ret;
+
+			buf[0] = 0x00 | (reg_addr & 0x7F);
+			buf[1] = reg_data;
+			if (this->config.spi_crc_en == State::AD777x_ENABLE) {
+				buf[2] = compute_crc8(&buf[0], 2);
+				buf_size = 3;
+			}
+			ret = spi_write_and_read(buf, buf_size);
+			this->cached_reg_val[reg_addr] = reg_data;
+			return ret;
+		}
+
+		int ad7779_spi_int_reg_read_mask(uint8_t reg_addr,uint8_t mask,uint8_t *data){
+			uint8_t reg_data;
+			int32_t ret;
+
+
+			ret = spi_int_reg_read(reg_addr, &reg_data);
+			*data = (reg_data & mask);
+
+			return ret;
+		}
+
+		int spi_int_reg_write_mask(uint8_t reg_addr,uint8_t mask,uint8_t data){
+			uint8_t reg_data;
+			int32_t ret;
+
+			reg_data = this->cached_reg_val[reg_addr];
+			reg_data &= ~mask;
+			reg_data |= data;
+			ret = spi_int_reg_write(reg_addr, reg_data);
+
+			return ret;
+		}
+
+		int spi_write_and_read(uint8_t *buf, size_t buf_size) {
+			if (buf == nullptr || buf_size == 0) {
+				return -1; // Error: buffer inválido
+			}
+		
+			digitalWrite(this->config.cs_pin, LOW); // Activa el dispositivo SPI
+		
+			for (size_t i = 0; i < buf_size; i++) {
+				buf[i] = this->p_spi->transfer(buf[i]); // Envía y recibe un byte simultáneamente
+			}
+		
+			digitalWrite(this->config.cs_pin, HIGH); // Desactiva el dispositivo SPI
+		
+			return 0; // Éxito
+		}
+
 	};
 	
-
 
 
 #endif // AD777x_H
