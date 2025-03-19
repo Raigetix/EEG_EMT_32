@@ -103,23 +103,31 @@ void AD777x::wait_for_data_ready() {
 
 void AD777x::read_all_channels() {
 
-	uint8_t buff[32] = { 0 };
+	/*uint8_t buff[32] = { 0 };
 	uint8_t byte_index;
 	uint8_t ch_id;
 	int32_t ret;
-	int32_t ret;
 
-	/* Read the SPI data */
 	ret = spi_write_and_read(buff,sizeof(buff));
 	if (ret) {
 		return;
 	}
 
-	/* Decode the bytes into ADC Raw data */
 	for (ch_id = 0; ch_id < NUM_CHANNELS; ch_id++) {
 		byte_index = (DATA_BYTES * ch_id) + (ch_id + 1);
 		this->ch_values[ch_id] = (buff[byte_index] << 16) | (buff[byte_index + 1] << 8) | (buff[byte_index + 2]);
-	}
+	}*/
+	wait_for_data_ready();
+    	digitalWrite(this->config.cs_pin, LOW);			// Activamos el dispositivo SPI
+	
+	    for (int ch = 0; ch < NUM_CHANNELS; ch++) {
+	        // Enviar comando 0x800000 antes de leer cada canal
+	        this->p_spi->transfer(0x80);
+	        this->ch_values[ch] += this->p_spi->transfer(0x00) << 16;
+	        this->ch_values[ch] += this->p_spi->transfer(0x00) << 8;
+	        this->ch_values[ch] += this->p_spi->transfer(0x00);
+	    }
+    	digitalWrite(this->config.cs_pin, HIGH);		// Desactivamos el dispositivo SPI
 }
 
 uint32_t AD777x::read_channel(Channel ch){
